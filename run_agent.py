@@ -6017,7 +6017,22 @@ class AIAgent:
                                 self._response_was_previewed = True
                                 break
                             
-                            # No fallback -- append the empty message as-is
+                            # Reasoning-only salvage: some models (e.g. GLM-5-Turbo
+                            # via OpenRouter) consistently produce reasoning/think
+                            # content without visible text.  Use the reasoning as
+                            # the final response rather than returning an error.
+                            salvage = reasoning_text
+                            if not salvage:
+                                # Also check inline <think> blocks in content
+                                think_blocks = re.findall(r'<think>(.*?)</think>', final_response, flags=re.DOTALL)
+                                if think_blocks:
+                                    salvage = "\n\n".join(b.strip() for b in think_blocks if b.strip())
+                            if salvage:
+                                self._vprint(f"{self.log_prefix}💡 Using reasoning content as final response ({len(salvage)} chars)")
+                                final_response = salvage
+                                break
+
+                            # No fallback and no reasoning -- append the empty message as-is
                             empty_msg = {
                                 "role": "assistant",
                                 "content": final_response,
@@ -6025,10 +6040,10 @@ class AIAgent:
                                 "finish_reason": finish_reason,
                             }
                             messages.append(empty_msg)
-                            
+
                             self._cleanup_task_resources(effective_task_id)
                             self._persist_session(messages, conversation_history)
-                            
+
                             return {
                                 "final_response": final_response or None,
                                 "messages": messages,

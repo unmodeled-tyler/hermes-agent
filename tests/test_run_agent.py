@@ -1059,14 +1059,13 @@ class TestRunConversation:
         assert result["completed"] is True
         assert result["api_calls"] == 2
 
-    def test_empty_content_retry_and_fallback(self, agent):
-        """Empty content (only think block) retries, then falls back to partial."""
+    def test_empty_content_retry_salvages_inline_think_blocks(self, agent):
+        """Inline <think> blocks are used as final response after retries exhaust."""
         self._setup_agent(agent)
         empty_resp = _mock_response(
             content="<think>internal reasoning</think>",
             finish_reason="stop",
         )
-        # Return empty 3 times to exhaust retries
         agent.client.chat.completions.create.side_effect = [
             empty_resp,
             empty_resp,
@@ -1078,7 +1077,46 @@ class TestRunConversation:
             patch.object(agent, "_cleanup_task_resources"),
         ):
             result = agent.run_conversation("answer me")
-        # After 3 retries with no real content, should return partial
+        # Reasoning content should be salvaged as the final response
+        assert result["completed"] is True
+        assert result["final_response"] == "internal reasoning"
+
+    def test_empty_content_retry_salvages_structured_reasoning(self, agent):
+        """Structured reasoning fields are used as final response after retries exhaust."""
+        self._setup_agent(agent)
+        empty_resp = _mock_response(
+            content="", finish_reason="stop",
+            reasoning="GLM-5-Turbo detailed analysis here",
+        )
+        agent.client.chat.completions.create.side_effect = [
+            empty_resp,
+            empty_resp,
+            empty_resp,
+        ]
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("answer me")
+        assert result["completed"] is True
+        assert result["final_response"] == "GLM-5-Turbo detailed analysis here"
+
+    def test_truly_empty_content_returns_partial(self, agent):
+        """No content and no reasoning returns partial error after retries exhaust."""
+        self._setup_agent(agent)
+        empty_resp = _mock_response(content="", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [
+            empty_resp,
+            empty_resp,
+            empty_resp,
+        ]
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("answer me")
         assert result["completed"] is False
         assert result.get("partial") is True
 
